@@ -1,0 +1,16 @@
+VSVersionInfo(
+  ffi=FixedFileInfo(filevers=(1, 1, 0, 0), prodvers=(1, 1, 0, 0), mask=0x3f, flags=0x0, OS=0x40004,
+                    fileType=0x1, subtype=0x0, date=(0, 0)),
+  kids=[
+    StringFileInfo([StringTable('0C0A04B0', [
+      StringStruct('CompanyName', 'vicsaizo'),
+      StringStruct('FileDescription', 'Karaokiza - conversor de canciones a karaoke UltraStar'),
+      StringStruct('FileVersion', '1.1.0'),
+      StringStruct('InternalName', 'Karaokiza'),
+      StringStruct('LegalCopyright', 'Motor: UltraSinger (c) Vadim Rangnau, licencia MIT'),
+      StringStruct('OriginalFilename', 'Karaokiza.exe'),
+      StringStruct('ProductName', 'Karaokiza'),
+      StringStruct('ProductVersion', '1.1.0')])]),
+    VarFileInfo([VarStruct('Translation', [0x0C0A, 1200])])
+  ]
+)
