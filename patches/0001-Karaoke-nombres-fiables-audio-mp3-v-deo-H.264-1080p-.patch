@@ -1,0 +1,265 @@
+From b12096e9565b565ed8bced1cfadd94fdb38183f6 Mon Sep 17 00:00:00 2001
+From: Karaoke <v.saiz@bacogames.es>
+Date: Sat, 24 Oct 2026 10:16:34 +0200
+Subject: [PATCH 1/3] =?UTF-8?q?Karaoke:=20nombres=20fiables,=20audio=20mp3?=
+ =?UTF-8?q?,=20v=C3=ADdeo=20H.264=201080p=20e=20idioma=20por=20votaci?=
+ =?UTF-8?q?=C3=B3n?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- MusicBrainz solo renombra si artista y título se parecen al vídeo
+- Limpia títulos de YouTube (Official Video, | coletillas, con letra)
+- Audio extraído siempre en mp3 (compatible con UltraStar Deluxe)
+- Vídeo H.264 hasta 1080p en lugar de AV1/4K
+- Idioma detectado votando en las 5 ventanas de voz más fuertes
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/modules/Audio/youtube.py              | 33 +++++++++---
+ src/modules/Speech_Recognition/Whisper.py | 31 ++++++++++++
+ src/modules/ffmpeg_helper.py              | 15 +++---
+ src/modules/musicbrainz_client.py         | 61 +++++++++--------------
+ 4 files changed, 91 insertions(+), 49 deletions(-)
+
+diff --git a/src/modules/Audio/youtube.py b/src/modules/Audio/youtube.py
+index 0c0ece9..d49fc64 100644
+--- a/src/modules/Audio/youtube.py
++++ b/src/modules/Audio/youtube.py
+@@ -1,6 +1,7 @@
+ """YouTube Downloader"""
+ 
+ import os
++import re
+ import yt_dlp
+ 
+ from modules.os_helper import sanitize_filename, get_unused_song_output_dir
+@@ -24,11 +25,29 @@ def get_youtube_title(url: str, cookiefile: str = None) -> tuple[str, str]:
+             url, download=False  # We just want to extract the info
+         )
+ 
+-    if "artist" in result:
+-        return result["artist"].strip(), result["track"].strip()
+-    if "-" in result["title"]:
+-        return result["title"].split("-")[0].strip(), result["title"].split("-")[1].strip()
+-    return result["channel"].strip(), result["title"].strip()
++    if result.get("artist") and result.get("track"):
++        return result["artist"].strip(), __clean_video_title(result["track"])
++    title = result["title"]
++    for separator in (" - ", " – ", " — ", "-"):
++        if separator in title:
++            artist, track = title.split(separator, 1)
++            return artist.strip(), __clean_video_title(track)
++    channel = re.sub(r"\s*-\s*Topic$|VEVO$", "", result["channel"]).strip()
++    return channel, __clean_video_title(title)
++
++
++# Video title noise like "(Official Video)", "[Lyrics]" or "| Movie Name"
++TITLE_NOISE = re.compile(
++    r"\s*[\(\[][^\)\]]*(official|oficial|video|v[ií]deo|clip|lyric|letra|audio|visualizer|4k|hd)[^\)\]]*[\)\]]",
++    re.IGNORECASE)
++
++
++def __clean_video_title(track: str) -> str:
++    track = re.split(r"\s+[|｜/]\s+", track)[0]
++    track = TITLE_NOISE.sub("", track)
++    track = re.sub(r"\s+(con letra|lyrics?|letra)\s*$", "", track, flags=re.IGNORECASE)
++    track = re.sub(r"\s{2,}", " ", track)
++    return track.strip(" -–—\"'“”«»") or track.strip()
+ 
+ 
+ def __download_youtube_video_with_audio(url: str, clear_filename: str, output_path: str, cookiefile: str = None) -> str:
+@@ -36,7 +55,9 @@ def __download_youtube_video_with_audio(url: str, clear_filename: str, output_pa
+ 
+     print(f"{ULTRASINGER_HEAD} Downloading Video with Audio")
+     ydl_opts = {
+-        "format": "bestvideo[ext=mp4]+bestaudio/best",
++        # H.264 up to 1080p: AV1/VP9 or 4K videos do not play in many UltraStar programs
++        "format": "bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio"
++                  "/bestvideo[ext=mp4][height<=1080]+bestaudio/best[height<=1080]/best",
+         "outtmpl": output_path + "/" + clear_filename + ".%(ext)s",
+         "merge_output_format": "mp4",
+         "cookiefile": cookiefile,
+diff --git a/src/modules/Speech_Recognition/Whisper.py b/src/modules/Speech_Recognition/Whisper.py
+index c0cd6e4..dd325d8 100644
+--- a/src/modules/Speech_Recognition/Whisper.py
++++ b/src/modules/Speech_Recognition/Whisper.py
+@@ -88,6 +88,34 @@ def replace_code_lines(source, start_token, end_token,
+     return re.sub(r"^(\s+)({}[\s\S]+?)(?=^\1{})".format(start_token, end_token),
+                   replace_with_indent, source, flags=re.MULTILINE)
+ 
++def detect_language_by_vote(loaded_whisper_model, audio, max_windows: int = 5) -> str:
++    """Detect the language on the loudest 30s vocal windows instead of only the first 30s.
++
++    Songs often start with an instrumental intro or a short phrase, which makes whisper's
++    first-30s detection unreliable. Probabilities of all windows are summed per language."""
++    from whisperx.audio import N_SAMPLES, log_mel_spectrogram
++    import numpy as np
++
++    windows = [audio[i:i + N_SAMPLES] for i in range(0, max(len(audio) - N_SAMPLES // 2, 1), N_SAMPLES)]
++    loudest = sorted(range(len(windows)), key=lambda i: float(np.sqrt(np.mean(windows[i] ** 2))), reverse=True)
++    n_mels = loaded_whisper_model.model.feat_kwargs.get("feature_size") or 80
++
++    votes: dict[str, float] = {}
++    used = 0
++    for i in sorted(loudest[:max_windows]):
++        window = windows[i]
++        segment = log_mel_spectrogram(window, n_mels=n_mels, padding=max(N_SAMPLES - window.shape[0], 0))
++        encoder_output = loaded_whisper_model.model.encode(segment)
++        for token, probability in loaded_whisper_model.model.model.detect_language(encoder_output)[0][:5]:
++            votes[token[2:-2]] = votes.get(token[2:-2], 0.0) + probability
++        used += 1
++
++    language = max(votes, key=votes.get)
++    confidence = votes[language] / used
++    print(f"{ULTRASINGER_HEAD} Detected language: {language} ({confidence:.2f}) voting over {used} vocal windows")
++    return language
++
++
+ def transcribe_with_whisper(
+     audio_path: str,
+     model: WhisperModel,
+@@ -119,6 +147,9 @@ def transcribe_with_whisper(
+ 
+         audio = whisperx.load_audio(audio_path)
+ 
++        if language is None:
++            language = detect_language_by_vote(loaded_whisper_model, audio)
++
+         print(f"{ULTRASINGER_HEAD} Transcribing {audio_path}")
+ 
+         result = loaded_whisper_model.transcribe(
+diff --git a/src/modules/ffmpeg_helper.py b/src/modules/ffmpeg_helper.py
+index 3ef9886..14e1826 100644
+--- a/src/modules/ffmpeg_helper.py
++++ b/src/modules/ffmpeg_helper.py
+@@ -31,17 +31,18 @@ def is_ffmpeg_available(user_path: str = "") -> bool:
+     return False
+ 
+ 
+-def extract_audio(input_video_path: str, output_audio_path: str) -> None:
+-    """Extract audio from video file in original format without re-encoding"""
++def extract_audio(input_video_path: str, output_audio_path: str, reencode_mp3: bool = False) -> None:
++    """Extract audio from video file in original format without re-encoding (or as mp3)"""
+     ffmpeg_path, _ = get_ffmpeg_and_ffprobe_paths()
+ 
++    # mp3 plays in every UltraStar program; opus/webm audio does not
++    codec_args = ["-c:a", "libmp3lame", "-q:a", "2"] if reencode_mp3 else ["-acodec", "copy"]
+     cmd = [
+         ffmpeg_path,
+         "-i",
+         input_video_path,
+         "-vn",  # No video
+-        "-acodec",
+-        "copy",  # Copy audio codec without re-encoding
++        *codec_args,
+         "-y",  # Overwrite output file if exists
+         output_audio_path,
+     ]
+@@ -146,12 +147,14 @@ def separate_audio_video(video_with_audio_path: str, basename_without_ext: str,
+     _, video_ext_with_dot = os.path.splitext(video_with_audio_path)
+     video_ext = video_ext_with_dot.lstrip('.')
+ 
+-    # Detect audio codec and get appropriate extension
++    # Detect audio codec; anything that is not mp3 is converted to mp3 for UltraStar compatibility
+     audio_ext = get_audio_codec_and_extension(video_with_audio_path)
++    reencode_mp3 = audio_ext != "mp3"
++    audio_ext = "mp3"
+ 
+     print(f"{ULTRASINGER_HEAD} Extracting audio from video")
+     audio_file_path = os.path.join(output_folder, f"{basename_without_ext}.{audio_ext}")
+-    extract_audio(video_with_audio_path, audio_file_path)
++    extract_audio(video_with_audio_path, audio_file_path, reencode_mp3)
+ 
+     print(f"{ULTRASINGER_HEAD} Creating video without audio")
+     video_only_path = os.path.join(output_folder, f"{basename_without_ext}_video.{video_ext}")
+diff --git a/src/modules/musicbrainz_client.py b/src/modules/musicbrainz_client.py
+index 4df1da2..b89bdf8 100644
+--- a/src/modules/musicbrainz_client.py
++++ b/src/modules/musicbrainz_client.py
+@@ -52,6 +52,7 @@ def search_musicbrainz(title: str, artist) -> SongInfo:
+     # remove from search_string "official video"
+     # todo: do we need filter?
+     origin_title = title
++    origin_artist = artist
+     for filter in title_filter:
+         title = title.lower().replace(filter.lower(), "").strip()
+         if artist is not None:
+@@ -64,7 +65,7 @@ def search_musicbrainz(title: str, artist) -> SongInfo:
+ 
+     if recording is None:
+         print(f"{ULTRASINGER_HEAD} {red_highlighted('No match found')}")
+-        return SongInfo(title=origin_title, artist="Unknown Artist")
++        return SongInfo(title=origin_title, artist=origin_artist or "Unknown Artist")
+ 
+     artist = recording['artist-credit-phrase']
+     title = recording['title']
+@@ -135,43 +136,29 @@ def __multi_line_search(artist: str, title: str):
+     result1 = __musicbrainz_request(lambda: musicbrainzngs.search_recordings(recording=title1, limit=10, artist=artist1, artistname=artist1))
+     result2 = __musicbrainz_request(lambda: musicbrainzngs.search_recordings(recording=title2, limit=10, artist=artist2, artistname=artist2))
+ 
+-    if result1 is None:
+-        result1 = {'recording-count': 0, 'recording-list': []}
+-    if result2 is None:
+-        result2 = {'recording-count': 0, 'recording-list': []}
+-
+-    # Filter result to ['artist-credit-phrase'] == artist
+-    record1 = [x for x in result1['recording-list'] if
+-               __clean_string(x['artist-credit-phrase']) == __clean_string(artist1)]
+-    record2 = [x for x in result2['recording-list'] if
+-               __clean_string(x['artist-credit-phrase']) == __clean_string(artist2)]
+-
+-    if len(record1) > 0 and len(record2) > 0:
+-        best_match1 = max(record1, key=lambda x: ratio(__clean_string(x['title']), __clean_string(title1)))
+-        best_match2 = max(record2, key=lambda x: ratio(__clean_string(x['title']), __clean_string(title2)))
+-
+-        is_match1 = ratio(__clean_string(title1), __clean_string(best_match1['title'])) > ratio(__clean_string(title2),
+-                                                                                                __clean_string(
+-                                                                                                    best_match2[
+-                                                                                                        'title']))
+-
+-        if is_match1:
+-            recording = record1[0]
+-        else:
+-            recording = record2[0]
+-
+-    elif len(record1) > 0:
+-        recording = record1[0]
+-    elif len(record2) > 0:
+-        recording = record2[0]
+-    elif result1['recording-count'] > 0:  # Artist = Title
+-        recording = result1['recording-list'][0]
+-    elif result2['recording-count'] > 0:  # Artist = Title
+-        recording = result2['recording-list'][0]
+-    else:
+-        recording = None
++    # A recording only counts if BOTH artist and title resemble the search; otherwise an unrelated
++    # song (another track of the artist, a band named like the title, a cover's original) renames it
++    best, best_score = None, 0.0
++    for result, s_artist, s_title, bonus in ((result1, artist1, title1, 0.05), (result2, artist2, title2, 0.0)):
++        if result is None:
++            continue
++        for record in result['recording-list']:
++            artist_sim = ratio(__clean_string(record['artist-credit-phrase']), __clean_string(s_artist))
++            title_sim = __title_similarity(record['title'], s_title)
++            if artist_sim < 0.85 or title_sim < 0.6:
++                continue
++            score = artist_sim + title_sim + bonus
++            if score > best_score:
++                best, best_score = record, score
+ 
+-    return recording
++    return best
++
++
++def __title_similarity(found: str, searched: str) -> float:
++    found, searched = __clean_string(found), __clean_string(searched)
++    if len(found) >= 4 and (found in searched or searched in found):
++        return max(0.9, ratio(found, searched))
++    return ratio(found, searched)
+ 
+ 
+ def __get_image(recording) -> (bytes, str):
+-- 
+2.49.0.windows.1
+

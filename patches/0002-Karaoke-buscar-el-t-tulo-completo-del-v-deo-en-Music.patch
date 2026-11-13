@@ -1,0 +1,86 @@
+From 54d2fcd0c4e65406c9166fa05823b356ed2dbcc1 Mon Sep 17 00:00:00 2001
+From: Karaoke <v.saiz@bacogames.es>
+Date: Sat, 24 Oct 2026 10:26:57 +0200
+Subject: [PATCH 2/3] =?UTF-8?q?Karaoke:=20buscar=20el=20t=C3=ADtulo=20comp?=
+ =?UTF-8?q?leto=20del=20v=C3=ADdeo=20en=20MusicBrainz=20y=20quitar=20emoji?=
+ =?UTF-8?q?s?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/modules/Audio/youtube.py      |  2 ++
+ src/modules/musicbrainz_client.py | 22 ++++++++++++++++++++++
+ 2 files changed, 24 insertions(+)
+
+diff --git a/src/modules/Audio/youtube.py b/src/modules/Audio/youtube.py
+index d49fc64..49f4740 100644
+--- a/src/modules/Audio/youtube.py
++++ b/src/modules/Audio/youtube.py
+@@ -2,6 +2,7 @@
+ 
+ import os
+ import re
++import unicodedata
+ import yt_dlp
+ 
+ from modules.os_helper import sanitize_filename, get_unused_song_output_dir
+@@ -43,6 +44,7 @@ TITLE_NOISE = re.compile(
+ 
+ 
+ def __clean_video_title(track: str) -> str:
++    track = "".join(c for c in track if unicodedata.category(c) not in ("So", "Sk", "Cs"))  # emojis
+     track = re.split(r"\s+[|｜/]\s+", track)[0]
+     track = TITLE_NOISE.sub("", track)
+     track = re.sub(r"\s+(con letra|lyrics?|letra)\s*$", "", track, flags=re.IGNORECASE)
+diff --git a/src/modules/musicbrainz_client.py b/src/modules/musicbrainz_client.py
+index b89bdf8..3ad7874 100644
+--- a/src/modules/musicbrainz_client.py
++++ b/src/modules/musicbrainz_client.py
+@@ -3,6 +3,7 @@ import string
+ import time
+ from urllib.error import URLError
+ from Levenshtein import ratio
++from unidecode import unidecode
+ from dataclasses import dataclass
+ from typing import Optional
+ from Settings import Settings
+@@ -63,6 +64,10 @@ def search_musicbrainz(title: str, artist) -> SongInfo:
+     else:
+         recording = __multi_line_search(artist, title)
+ 
++    if recording is None:
++        # e.g. uploader "tonks k", title "LAS MAÑANITAS 'VICENTE FERNANDEZ'"
++        recording = __contained_search(f"{origin_artist or ''} {origin_title}")
++
+     if recording is None:
+         print(f"{ULTRASINGER_HEAD} {red_highlighted('No match found')}")
+         return SongInfo(title=origin_title, artist=origin_artist or "Unknown Artist")
+@@ -154,6 +159,23 @@ def __multi_line_search(artist: str, title: str):
+     return best
+ 
+ 
++def __contained_search(raw: str):
++    """Free search with the whole video title; accept a recording only if its artist AND title are written in it"""
++    haystack = f" {__normalize(raw)} "
++    result = __musicbrainz_request(lambda: musicbrainzngs.search_recordings(query=__clean_string(raw), limit=25))
++    if result is None:
++        return None
++    for record in result['recording-list']:
++        artist, title = __normalize(record['artist-credit-phrase']), __normalize(record['title'])
++        if len(artist) >= 3 and len(title) >= 3 and f" {artist} " in haystack and f" {title} " in haystack:
++            return record
++    return None
++
++
++def __normalize(s: str) -> str:
++    return " ".join(__clean_string(unidecode(s)).split())
++
++
+ def __title_similarity(found: str, searched: str) -> float:
+     found, searched = __clean_string(found), __clean_string(searched)
+     if len(found) >= 4 and (found in searched or searched in found):
+-- 
+2.49.0.windows.1
+

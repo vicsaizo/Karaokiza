@@ -1,0 +1,30 @@
+From 26bd66e7e50d1c47ff952cb06dc31702039724b0 Mon Sep 17 00:00:00 2001
+From: Karaoke <v.saiz@bacogames.es>
+Date: Sat, 24 Oct 2026 10:29:42 +0200
+Subject: [PATCH 3/3] =?UTF-8?q?Karaoke:=20saltar=20notas=20de=20duraci?=
+ =?UTF-8?q?=C3=B3n=20cero=20al=20crear=20el=20MIDI?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/modules/Midi/midi_creator.py | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/src/modules/Midi/midi_creator.py b/src/modules/Midi/midi_creator.py
+index 97446e1..b712062 100644
+--- a/src/modules/Midi/midi_creator.py
++++ b/src/modules/Midi/midi_creator.py
+@@ -28,6 +28,8 @@ def create_midi_instrument(midi_segments: list[MidiSegment]) -> object:
+     velocity = 100
+ 
+     for i, midi_segment in enumerate(midi_segments):
++        if midi_segment.end <= midi_segment.start:
++            continue  # zero-length notes make pretty_midi raise
+         note = pretty_midi.Note(velocity, librosa.note_to_midi(midi_segment.note), midi_segment.start, midi_segment.end)
+         instrument.notes.append(note)
+ 
+-- 
+2.49.0.windows.1
+
