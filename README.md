@@ -57,6 +57,17 @@ powershell -File tools\build.ps1
 Genera `dist\Karaokiza-Setup-<versión>.exe`. El script clona UltraSinger en el commit fijado, aplica
 `patches\*.patch`, empaqueta la ventana con PyInstaller y compila el instalador.
 
+## Aviso: no es 100 % preciso
+
+Karaokiza trabaja con modelos de IA y el resultado es automático: la letra, los tiempos y las notas
+pueden tener errores (palabras mal escuchadas, notas desplazadas, idioma mal detectado, nombres de
+canción incorrectos). Revisa cada canción y corrígela en el editor de UltraStar si hace falta.
+Se ofrece «tal cual», sin garantías.
+
+*English: Karaokiza uses AI models and its output is automatic and not 100% accurate. Lyrics, timing,
+notes, detected language and song names may contain mistakes. Please review each song and fix it in the
+UltraStar editor if needed. Provided "as is", without warranty.*
+
 ## Privacidad y uso responsable
 
 - No recoge ni envía datos tuyos. Solo consulta GitHub para saber si hay una versión nueva (se puede

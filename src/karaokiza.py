@@ -393,6 +393,9 @@ class KaraokeApp:
             "con FFmpeg, yt-dlp, Whisper, Demucs y PyTorch.\n\n"
             "Privacidad: no recoge ni envía datos tuyos. Solo consulta GitHub para saber\n"
             "si hay una versión nueva, y descarga canciones y modelos de sus webs oficiales.\n\n"
+            "Aviso: el resultado es automático y no es 100 % preciso. La letra, los tiempos\n"
+            "y las notas pueden tener errores; revísalos y corrígelos si hace falta.\n"
+            "Disclaimer: output is automatic and not 100% accurate; it may contain mistakes.\n\n"
             "Usa solo contenido que tengas derecho a usar: descargar de YouTube puede ir\n"
             "contra sus condiciones de uso."
         )
