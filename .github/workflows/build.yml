@@ -1,0 +1,49 @@
+name: Compilar instalador
+
+# - Al subir una etiqueta v*: compila el instalador y lo adjunta a la release de esa etiqueta
+#   (la crea si no existe).
+# - Manual (Actions → Run workflow): compila y deja el instalador como artefacto, sin publicar nada.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Instalar Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Compilar instalador
+        shell: pwsh
+        run: ./tools/build.ps1
+
+      - name: Guardar como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: Karaokiza-Setup
+          path: dist/Karaokiza-Setup-*.exe
+
+      - name: Adjuntar a la release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $exe = (Get-ChildItem dist\Karaokiza-Setup-*.exe | Select-Object -First 1).FullName
+          gh release view $tag --repo "${{ github.repository }}" 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag $exe --repo "${{ github.repository }}" --title "Karaokiza $($tag.TrimStart('v'))" --generate-notes
+          } else {
+            gh release upload $tag $exe --repo "${{ github.repository }}" --clobber
+          }
